@@ -33,9 +33,35 @@
 # --------------------------------------------------
 import datetime
 import json
+import logging
 import os
 import sys
 
+# --------------------------------------------------
+# Logging Configuration
+# --------------------------------------------------
+logger = logging.getLogger("DailyJournalCLIApp")
+logger.setLevel(logging.DEBUG)  # Captures all levels
+
+# FIle handler
+file_handler = logging.FileHandler("journal.log")
+file_handler.setLevel(logging.DEBUG) # Captutes all logs
+
+# Console handler (only WARNING and above)
+console_handler = logging.FileHandler("journal.log")
+console_handler.setLevel(logging.WARNING)
+
+# Formatter
+formatter = logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+file_handler.setFormatter(formatter)
+console_handler.setFormatter(formatter)
+
+# Add handlers
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
 
 # ==========================================================
 
@@ -61,13 +87,15 @@ def command_processing(args):
     elif args[1] == "--add" and len(args) == 3:
         add_entry(args[2])
     elif args[1] == "--view" and len(args) == 3:
-        view_entry()
+        view_entry(args[2])
     elif args[1] == "--edit" and len(args) == 4:
         edit_entry(args[2], args[3])
     elif args[1] == "--delete" and len(args) == 3:
         delete_entry(args[2])
     elif args[1] == "--list":
         display_list()
+    elif args[1] == "--logging":
+        view_logging()
     else:
         print("Command not recorgnized. Use -h or --help for help.")
 
@@ -116,6 +144,7 @@ class JournalEntry:
 def add_entry(entry):
     if not input_validator(entry):
         print("Journal entry cannot be empty.")
+        logger.warning("Attempted to add empty journal entry.")
         return
     date_string = datetime.datetime.now().strftime("%Y-%m-%d")
     new_entry = {
@@ -129,11 +158,13 @@ def add_entry(entry):
     for item in context:
         if item.get("date") == date_string:
             print("An entry for today already exists.")
+            logger.warning(f"Duplicate entry attempt for {date_string}.")
             return
     context.append(new_entry)
     write_file(file="journal_entries.json",
                 content=json.dumps(context))
     print(f"Entry for {date_string} added.")
+    logger.info(f"Added journal entry for {date_string}.")
 
 # --------------------------------------------------
 # 2. view entry
@@ -145,23 +176,25 @@ def add_entry(entry):
 4. If not found, the app displays a "No entry found" message.
 """
 def view_entry(date_string):
-    if validate_date_format(date_string=date_string) == False:
+    if not validate_date_format(date_string=date_string):
         print("Invalid date format. Please use YYYY-MM-DD.")
         return
     context = read_file("journal_entries.json")
     if context == None:
         print("No entries found or the file is missing.")
-    else:
-        entry_found = False
-        for item in context:
-            for key in item.keys():
-                if key["date"] == date_string:
-                    print(f"Date: {key['date']} - ", end="")
-                    print(f"Entry: {key['content'][:30]}...")
-                    entry_found = True
-                    break
-        if not entry_found:
-            print("Entry not found for the given date.")
+        logger.warning("Attempted to view entry, but file missing.")
+        return
+    entry_found = False
+    for item in context:
+        if item.get("date") == date_string:
+            print(f"Date: {item['date']} - ", end="")
+            print(f"Entry: \"{item['content']}\"")
+            entry_found = True
+            logger.info(f"Viewed entry for {date_string}.")
+            break
+    if not entry_found:
+        print("Entry not found for the given date.")
+        logger.warning(f"Attempted to view non-existent entry for {date_string}.")
 
 # --------------------------------------------------
 # 3. edit entry
@@ -175,28 +208,37 @@ def view_entry(date_string):
     was edited.
 """
 def edit_entry(date_string, entry):
-    if validate_date_format(date_string=date_string) == False:
+    if not validate_date_format(date_string=date_string):
         print("Invalid date format. Please use YYYY-MM-DD.")
         return
-    elif not input_validator(entry):
+    if not input_validator(entry):
         print("Journal entry cannot be empty.")
+        logger.warning("Attempted to add empty journal entry.")
         return
     context = read_file("journal_entries.json")
-    if context == None:
+    if not context:
         print("No entries found or the file is missing.")
+        return
+    
+    # ensure conext is a list
+    if isinstance(context, str):
+        context = json.loads(context)
+    
+    entry_found = False
+
+    for item in context:
+        if item.get("date") == date_string:
+            item["content"] = entry
+            entry_found = True
+            break
+    
+    # Write back to file if entry was found and updated
+    if entry_found:
+        write_file(file="journal_entries.json", 
+                    content=json.dumps(context))
+        print(f"Entry for {date_string} updated.")
     else:
-        entry_found = False
-        for item in context:
-            if item.get("date") == date_string:
-                item.get(["content"]) = entry
-                entry_found = True
-                break
-        if entry_found:
-            write_file(file="journal_entries.json", 
-                       content=json.dumps(context))
-            print(f"Entry for {date_string} updated.")
-        else:
-            print("Entry not found for the given date.")
+        print("Entry not found for the given date.")
 
 # --------------------------------------------------
 # 4. delete entry
@@ -218,11 +260,10 @@ def delete_entry(date_string):
     else:
         entry_found = False
         for item in context:
-            for key in item.keys():
-                if key["date"] == date_string:
-                    context.remove(item)
-                    entry_found = True
-                    break
+            if item.get("date") == date_string:
+                context.remove(item)
+                entry_found = True
+                break
         if entry_found:
             write_file(file="journal_entries.json", 
                        content=json.dumps(context))
@@ -248,9 +289,9 @@ def display_list():
         print("Journal Entries:")
         print("----------------")
         for item in context:
-            for key in item.keys():
-                print(f"Date: {key['date']} - ", end="")
-                print(f"Entry: {key['content'][:30]}...")
+            print(f"Date: {item['date']} - ", end="")
+            print(f"Entry: \"{item['content'][:30]}\"", end="")
+            print(f"{'...' if (len(item['content']) > 30) else ''}")
 # --------------------------------------------------
 # 6. help
 # --------------------------------------------------
@@ -266,6 +307,8 @@ def display_help(string):
     print("--edit <date> <string>\tEdit entry")
     print(" -h or --help\t\tDisplay program help")
     print("--list \t\t\tList entries")
+    # loggging feature is Easter egg available but not doumented
+    # print("--logging \t\tView logs")  
     print(" -v or --version\tDisplay program version")
     print("--view <date>\t\tView entry")
 
@@ -292,14 +335,14 @@ either in a structured format like JSON or plain text.
 """
 def read_file(file):
     if (os.path.exists(file) == True):
-            if file.endswith(".txt"):
-                with open(file=file, mode="r") as f:
-                    content = f.read()
-            elif file.endswith(".json"):
+            if file.endswith(".json"):
                 with open(file=file, mode="r") as f:
                     if os.stat(file).st_size == 0:
                         return None
                     content = json.load(f)
+            else:
+                with open(file=file, mode="r") as f:
+                    content = f.read()
             return content
     else:
         print("File not found.")
@@ -330,8 +373,19 @@ def validate_date_format(date_string):
 def input_validator(entry):
     return bool(len(entry.strip()) > 0)
 
-def logging():
-    pass
+def view_logging():
+    print("Logging handled by logging library.")
+    log_file = "journal.log"
+    if not os.path.exists(log_file):
+        print("No log file found.")
+        return
+    logs = read_file(file=log_file)
+    if logs:
+        print("----- Journal CLI Logs -----")
+        print(logs, end="")
+        print("----- End of Logs -----")
+    else:
+        print("No logs found.")
 
 if __name__ == "__main__":
     main()

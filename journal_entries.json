@@ -5,6 +5,10 @@
     },
     {
         "date": "2025-12-11",
-        "content": "a"
+        "content": "this is a test entry"
+    },
+    {
+        "date": "2025-12-12",
+        "content": "this is a test entry for today being a 30 character long string"
     }
 ]
